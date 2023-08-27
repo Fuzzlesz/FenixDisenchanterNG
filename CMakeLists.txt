@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-
-# ---- Options ----
-
-option(COPY_BUILD "Copy the build output to the Skyrim directory." OFF)
+set(NAME "FenixDisenchanter")
+set(VERSION 1.0.0)
 
 # ---- Cache build vars ----
 
@@ -12,8 +10,16 @@ macro(set_from_environment VARIABLE)
 	endif ()
 endmacro()
 
-set_from_environment(Skyrim64Path)
 set_from_environment(VCPKG_ROOT)
+set(CommonLibName "CommonLibSSE")
+set_from_environment(Skyrim64Path)
+set(SkyrimPath ${Skyrim64Path})
+set(SkyrimVersion "Skyrim SSE")
+
+message(
+	STATUS
+	"Building ${NAME} ${VERSION}."
+)
 
 if (DEFINED VCPKG_ROOT)
 	set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
@@ -26,13 +32,12 @@ else ()
 endif ()
 
 set(Boost_USE_STATIC_RUNTIME OFF CACHE BOOL "")
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
 
 # ---- Project ----
 
 project(
-	FenixDisenchanter
-	VERSION 1.0.0
+	${NAME}
+	VERSION ${VERSION}
 	LANGUAGES CXX
 )
 
@@ -59,11 +64,11 @@ endif()
 
 # ---- Globals ----
 
-if (MSVC)
-	add_compile_definitions(
-		_UNICODE
-	)
+add_compile_definitions(
+	SKSE_SUPPORT_XBYAK
+)
 
+if (MSVC)
 	if (NOT ${CMAKE_GENERATOR} STREQUAL "Ninja")
 		add_compile_options(
 			/MP	# Build with Multiple Processes
@@ -75,26 +80,26 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 
 set(Boost_USE_STATIC_LIBS ON)
-
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
 
 # ---- Dependencies ----
 
-add_subdirectory($ENV{CommonLibSSE} $ENV{CommonLibSSE}/build)
+find_package(CommonLibSSE CONFIG REQUIRED)
 
-find_package(spdlog REQUIRED CONFIG)
+find_package(robin_hood CONFIG REQUIRED)
+find_path(SIMPLEINI_INCLUDE_DIRS "ConvertUTF.c")
 
 # ---- Add source files ----
 
-set(SOURCES
-	src/main.cpp
-	src/PCH.h
-)
+include(cmake/headerlist.cmake)
+include(cmake/sourcelist.cmake)
 
 source_group(
 	TREE
 		${CMAKE_CURRENT_SOURCE_DIR}
 	FILES
-		${SOURCES}
+		${headers}
+		${sources}
 )
 
 source_group(
@@ -109,11 +114,11 @@ source_group(
 add_library(
 	${PROJECT_NAME}
 	SHARED
-	${SOURCES}
+	${headers}
+	${sources}
 	${CMAKE_CURRENT_BINARY_DIR}/include/Version.h
 	${CMAKE_CURRENT_BINARY_DIR}/version.rc
 	.clang-format
-	.editorconfig
 )
 
 target_compile_features(
@@ -122,18 +127,31 @@ target_compile_features(
 		cxx_std_20
 )
 
+target_compile_definitions(
+	${PROJECT_NAME}
+	PRIVATE
+		_UNICODE
+)
+
 target_include_directories(
 	${PROJECT_NAME}
 	PRIVATE
 		${CMAKE_CURRENT_BINARY_DIR}/include
 		${CMAKE_CURRENT_SOURCE_DIR}/src
+		${SIMPLEINI_INCLUDE_DIRS}
 )
 
 target_link_libraries(
 	${PROJECT_NAME}
 	PRIVATE
-		CommonLibSSE::CommonLibSSE
-		spdlog::spdlog
+		${CommonLibName}::${CommonLibName}
+		robin_hood::robin_hood
+)
+
+target_precompile_headers(
+	${PROJECT_NAME}
+	PRIVATE
+		src/PCH.h
 )
 
 if (MSVC)
@@ -169,10 +187,6 @@ if (MSVC)
 			/Zc:wchar_t	# wchar_t Is Native Type
 
 			/external:anglebrackets
-			/external:W0
-
-			/W4	# Warning level
-			/WX	# Warning level (warnings are errors)
 
 			"$<$<CONFIG:DEBUG>:>"
 			"$<$<CONFIG:RELEASE>:/Zc:inline;/JMC-;/Ob3>"
@@ -181,33 +195,12 @@ if (MSVC)
 	target_link_options(
 		${PROJECT_NAME}
 		PRIVATE
-			/WX	# Treat Linker Warnings as Errors
 
 			"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
 			"$<$<CONFIG:RELEASE>:/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
 	)
-endif ()
 
-target_precompile_headers(
-	${PROJECT_NAME}
-	PRIVATE
-		src/PCH.h
-)
+	# fix a warning with /Ob2 being overridden with /Ob3
+	string(REPLACE "/Ob2" "/Ob3" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
-# ---- Post build ----
-
-if (COPY_BUILD)
-	if (DEFINED Skyrim64Path)
-		add_custom_command(
-			TARGET ${PROJECT_NAME}
-			POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> ${Skyrim64Path}/Data/SKSE/Plugins/
-			COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> ${Skyrim64Path}/Data/SKSE/Plugins/
-		)
-	else ()
-		message(
-			WARNING
-			"Variable Skyrim64Path is not defined. Skipping post-build copy command."
-		)
-	endif ()
 endif ()
